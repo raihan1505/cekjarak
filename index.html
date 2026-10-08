@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Penghitung Jarak</title>
+</head>
+<body>
+  <h2>Jarak Tempuh: <span id="jarak">0</span> m</h2>
+  <p id="status">Menunggu lokasi...</p>
+  <button id="start">Mulai</button>
+  <button id="stop">Stop</button>
+
+<script>
+let watchId = null, last = null, total = 0;
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(lat1*rad) * Math.cos(lat2*rad) * Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+document.getElementById('start').onclick = () => {
+  if (!navigator.geolocation) return alert('Geolocation tidak didukung');
+  watchId = navigator.geolocation.watchPosition(pos => {
+    const { latitude, longitude, accuracy } = pos.coords;
+    document.getElementById('status').textContent =
+      `Akurasi: ±${Math.round(accuracy)} m`;
+
+    if (accuracy > 30) return;            // abaikan sinyal GPS jelek
+    if (last) {
+      const d = haversine(last.lat, last.lon, latitude, longitude);
+      if (d > 3) {                        // abaikan jitter < 3 m
+        total += d;
+        document.getElementById('jarak').textContent = total.toFixed(1);
+        last = { lat: latitude, lon: longitude };
+      }
+    } else {
+      last = { lat: latitude, lon: longitude };
+    }
+  }, err => {
+    document.getElementById('status').textContent = 'Error: ' + err.message;
+  }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+};
+
+document.getElementById('stop').onclick = () => {
+  navigator.geolocation.clearWatch(watchId);
+};
+</script>
+</body>
+</html>
