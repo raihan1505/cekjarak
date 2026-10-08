@@ -1,53 +1,246 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Penghitung Jarak</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14213d">
+<title>Penghitung Jarak</title>
+<style>
+  :root {
+    --bg: #f3f1ec;
+    --ink: #14213d;
+    --muted: #5d6677;
+    --line: #d6d2c8;
+    --go: #1f7a4d;
+    --stop: #b3261e;
+    --card: #fbfaf7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1626;
+      --ink: #eef0f5;
+      --muted: #9aa4b8;
+      --line: #2a3550;
+      --go: #4cc38a;
+      --stop: #ff7a70;
+      --card: #172036;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+    display: flex;
+    justify-content: center;
+  }
+  main { width: 100%; max-width: 420px; }
+  h1 { font-size: 1rem; font-weight: 600; color: var(--muted); margin: 8px 0 24px; }
+  .total { font-size: clamp(3.5rem, 22vw, 5.5rem); font-weight: 700; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .unit { font-size: 1.25rem; font-weight: 500; color: var(--muted); margin-left: 6px; letter-spacing: 0; }
+  .status { margin: 14px 0 28px; color: var(--muted); min-height: 1.4em; }
+  .status.error { color: var(--stop); }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-bottom: 28px; }
+  .stats div { padding: 14px 0; }
+  .stats div + div { padding-left: 16px; border-left: 1px solid var(--line); }
+  .stats dt { font-size: .85rem; color: var(--muted); }
+  .stats dd { margin: 4px 0 0; font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; gap: 10px; }
+  button {
+    flex: 1; font: inherit; font-weight: 600; padding: 16px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  #btn-toggle { background: var(--go); border-color: var(--go); color: #fff; flex: 2; }
+  #btn-toggle.running { background: var(--stop); border-color: var(--stop); }
+  .dest { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .dest h2 { font-size: 1rem; margin: 0 0 10px; }
+  .dest .row { display: flex; gap: 8px; }
+  .dest input {
+    flex: 1; min-width: 0; font: inherit; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+  .dest button { flex: 0 0 auto; padding: 12px 16px; }
+  .dest output { display: block; margin-top: 10px; color: var(--muted); }
+  .note { margin-top: 24px; font-size: .85rem; color: var(--muted); line-height: 1.5; }
+</style>
 </head>
 <body>
-  <h2>Jarak Tempuh: <span id="jarak">0</span> m</h2>
-  <p id="status">Menunggu lokasi...</p>
-  <button id="start">Mulai</button>
-  <button id="stop">Stop</button>
+<main>
+  <h1>Penghitung jarak tempuh</h1>
+
+  <div class="total"><span id="jarak">0</span><span class="unit" id="satuan">m</span></div>
+  <p class="status" id="status" role="status" aria-live="polite">Tekan Mulai untuk melacak lokasi.</p>
+
+  <dl class="stats">
+    <div><dt>Waktu</dt><dd id="waktu">00:00:00</dd></div>
+    <div><dt>Kecepatan rata-rata</dt><dd><span id="kecepatan">0.0</span> km/jam</dd></div>
+  </dl>
+
+  <div class="actions">
+    <button id="btn-toggle">Mulai</button>
+    <button id="btn-reset">Reset</button>
+  </div>
+
+  <section class="dest">
+    <h2>Jarak ke tujuan</h2>
+    <div class="row">
+      <input id="lat" inputmode="decimal" placeholder="Latitude" aria-label="Latitude tujuan">
+      <input id="lon" inputmode="decimal" placeholder="Longitude" aria-label="Longitude tujuan">
+      <button id="btn-dest">Hitung</button>
+    </div>
+    <output id="dest-out" aria-live="polite"></output>
+  </section>
+
+  <p class="note">Jarak dihitung garis lurus antar titik GPS (Haversine). Biarkan layar tetap menyala selama melacak.</p>
+</main>
 
 <script>
-let watchId = null, last = null, total = 0;
+(() => {
+  const MAX_ACCURACY = 30;   // meter: abaikan titik dengan akurasi lebih buruk
+  const MIN_STEP = 3;        // meter: abaikan gerakan lebih kecil (GPS drift)
 
-function haversine(lat1, lon1, lat2, lon2) {
-  const R = 6371000, rad = Math.PI / 180;
-  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
-  const a = Math.sin(dLat/2)**2 +
-            Math.cos(lat1*rad) * Math.cos(lat2*rad) * Math.sin(dLon/2)**2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
+  const $ = id => document.getElementById(id);
+  const el = {
+    jarak: $('jarak'), satuan: $('satuan'), status: $('status'),
+    waktu: $('waktu'), kecepatan: $('kecepatan'),
+    toggle: $('btn-toggle'), reset: $('btn-reset'),
+    lat: $('lat'), lon: $('lon'), dest: $('btn-dest'), destOut: $('dest-out')
+  };
 
-document.getElementById('start').onclick = () => {
-  if (!navigator.geolocation) return alert('Geolocation tidak didukung');
-  watchId = navigator.geolocation.watchPosition(pos => {
+  let watchId = null, wakeLock = null, timer = null;
+  let last = null, current = null, total = 0, elapsedMs = 0, startedAt = 0;
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000, rad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  function formatJarak(m) {
+    return m >= 1000
+      ? { nilai: (m / 1000).toFixed(2), satuan: 'km' }
+      : { nilai: m.toFixed(1), satuan: 'm' };
+  }
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function render() {
+    const j = formatJarak(total);
+    el.jarak.textContent = j.nilai;
+    el.satuan.textContent = j.satuan;
+
+    const ms = elapsedMs + (watchId !== null ? Date.now() - startedAt : 0);
+    const s = Math.floor(ms / 1000);
+    el.waktu.textContent = `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s % 3600 / 60))}:${pad(s % 60)}`;
+    el.kecepatan.textContent = s > 0 ? (total / s * 3.6).toFixed(1) : '0.0';
+  }
+
+  function setStatus(text, isError = false) {
+    el.status.textContent = text;
+    el.status.classList.toggle('error', isError);
+  }
+
+  function onPosition(pos) {
     const { latitude, longitude, accuracy } = pos.coords;
-    document.getElementById('status').textContent =
-      `Akurasi: ±${Math.round(accuracy)} m`;
+    current = { lat: latitude, lon: longitude };
+    setStatus(`Akurasi GPS: ±${Math.round(accuracy)} m`);
 
-    if (accuracy > 30) return;            // abaikan sinyal GPS jelek
-    if (last) {
-      const d = haversine(last.lat, last.lon, latitude, longitude);
-      if (d > 3) {                        // abaikan jitter < 3 m
-        total += d;
-        document.getElementById('jarak').textContent = total.toFixed(1);
-        last = { lat: latitude, lon: longitude };
-      }
-    } else {
-      last = { lat: latitude, lon: longitude };
+    if (accuracy > MAX_ACCURACY) return;
+
+    if (!last) { last = current; return; }
+    const d = haversine(last.lat, last.lon, latitude, longitude);
+    if (d >= MIN_STEP) {
+      total += d;
+      last = current;
+      render();
     }
-  }, err => {
-    document.getElementById('status').textContent = 'Error: ' + err.message;
-  }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
-};
+  }
 
-document.getElementById('stop').onclick = () => {
-  navigator.geolocation.clearWatch(watchId);
-};
+  function onError(err) {
+    const pesan = {
+      1: 'Izin lokasi ditolak. Aktifkan izin lokasi untuk situs ini di pengaturan browser.',
+      2: 'Lokasi tidak tersedia. Pastikan GPS menyala.',
+      3: 'Pencarian lokasi terlalu lama. Coba pindah ke area terbuka.'
+    };
+    setStatus(pesan[err.code] || err.message, true);
+  }
+
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+    } catch (_) { /* tidak fatal */ }
+  }
+
+  function start() {
+    if (!('geolocation' in navigator)) {
+      setStatus('Browser ini tidak mendukung geolokasi.', true);
+      return;
+    }
+    setStatus('Mencari sinyal GPS...');
+    startedAt = Date.now();
+    watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+      enableHighAccuracy: true, maximumAge: 0, timeout: 15000
+    });
+    timer = setInterval(render, 1000);
+    requestWakeLock();
+    el.toggle.textContent = 'Berhenti';
+    el.toggle.classList.add('running');
+  }
+
+  function stop() {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    elapsedMs += Date.now() - startedAt;
+    clearInterval(timer);
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    last = null; // titik berikutnya tidak dihitung dari posisi lama
+    el.toggle.textContent = 'Lanjutkan';
+    el.toggle.classList.remove('running');
+    setStatus('Pelacakan dihentikan.');
+    render();
+  }
+
+  function resetAll() {
+    if (watchId !== null) stop();
+    total = 0; elapsedMs = 0; last = null; current = null;
+    el.toggle.textContent = 'Mulai';
+    el.destOut.textContent = '';
+    setStatus('Tekan Mulai untuk melacak lokasi.');
+    render();
+  }
+
+  function hitungKeTujuan() {
+    const lat = parseFloat(el.lat.value.replace(',', '.'));
+    const lon = parseFloat(el.lon.value.replace(',', '.'));
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      el.destOut.textContent = 'Masukkan koordinat yang valid, misalnya -6.2088 dan 106.8456.';
+      return;
+    }
+    if (!current) {
+      el.destOut.textContent = 'Lokasi belum didapat. Tekan Mulai dan tunggu sinyal GPS.';
+      return;
+    }
+    const j = formatJarak(haversine(current.lat, current.lon, lat, lon));
+    el.destOut.textContent = `Jarak garis lurus ke tujuan: ${j.nilai} ${j.satuan}`;
+  }
+
+  el.toggle.addEventListener('click', () => (watchId === null ? start() : stop()));
+  el.reset.addEventListener('click', resetAll);
+  el.dest.addEventListener('click', hitungKeTujuan);
+
+  // Wake lock hilang saat tab disembunyikan; minta lagi saat kembali
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && watchId !== null) requestWakeLock();
+  });
+
+  render();
+})();
 </script>
 </body>
 </html>
